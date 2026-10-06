@@ -1,0 +1,11 @@
+<resources>
+    <color name="black_obsidian">#0A0D14</color>
+    <color name="surface_dark">#161B26</color>
+    <color name="surface_card">#202637</color>
+    <color name="emerald_cyber">#10B981</color>
+    <color name="amber_accent">#F59E0B</color>
+    <color name="crimson_line">#EF4444</color>
+    <color name="cyan_glow">#06B6D4</color>
+    <color name="text_primary">#F9FAFB</color>
+    <color name="text_secondary">#9CA3AF</color>
+</resources>

@@ -1,0 +1,18 @@
+<resources>
+    <string name="app_name">شمارشگر هوشمند</string>
+    <string name="camera_permission_title">دسترسی به دوربین لازم است</string>
+    <string name="camera_permission_desc">برای تشخیص زنده و شمارش دقیق محصولات، لطفاً مجوز دوربین را فعال کنید.</string>
+    <string name="grant_permission">فعال‌سازی دوربین</string>
+    <string name="mode_flow">شمارش خط عبور (نوار نقاله)</string>
+    <string name="mode_batch">شمارش بسته‌ای (سینی و کادر)</string>
+    <string name="reset">صفر کردن</string>
+    <string name="pause">توقف</string>
+    <string name="resume">ادامه</string>
+    <string name="export_csv">خروجی CSV</string>
+    <string name="torch">چراغ‌قوه</string>
+    <string name="line_position">محل خط شمارش</string>
+    <string name="total_count">تعداد کل</string>
+    <string name="in_frame">در کادر</string>
+    <string name="rate_per_min">سرعت / دقیقه</string>
+    <string name="fps">FPS</string>
+</resources>

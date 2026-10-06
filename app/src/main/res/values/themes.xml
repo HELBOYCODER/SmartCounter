@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.SmartCounter" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">@color/black_obsidian</item>
+        <item name="android:navigationBarColor">@color/black_obsidian</item>
+        <item name="android:windowBackground">@color/black_obsidian</item>
+    </style>
+</resources>
