@@ -7,7 +7,7 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -18,12 +18,12 @@ jobs:
 
   build:
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
@@ -39,8 +39,22 @@ jobs:
       - name: Install buildozer + cython
         run: pip install buildozer Cython==0.29.36
 
-      - name: Accept Android licenses
-        run: yes | sdkmanager --licenses || true
+      - name: Pre-accept Android licenses
+        run: |
+          mkdir -p ~/.buildozer/android/platform/android-sdk/cmdline-tools
+          cd /tmp
+          curl -sL "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip" -o cmdtools.zip
+          unzip -q cmdtools.zip -d cmdtools-tmp
+          mkdir -p ~/.buildozer/android/platform/android-sdk/cmdline-tools/latest
+          mv cmdtools-tmp/cmdline-tools/* ~/.buildozer/android/platform/android-sdk/cmdline-tools/latest/
+          export ANDROID_SDK_ROOT=~/.buildozer/android/platform/android-sdk
+          export PATH=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH
+          mkdir -p $ANDROID_SDK_ROOT/licenses
+          echo "8933bad161af4178b1185a5a56d800b26f0c7a59" > $ANDROID_SDK_ROOT/licenses/android-sdk-license
+          echo "d56f5187479451eabfb336dd316432923cb30c739a" >> $ANDROID_SDK_ROOT/licenses/android-sdk-license
+          echo "24333f8a63b90f3361ddbbef20f9d63b772c9506" >> $ANDROID_SDK_ROOT/licenses/android-sdk-license
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" 2>&1 | tail -2
 
       - name: Build APK (debug)
         run: |
