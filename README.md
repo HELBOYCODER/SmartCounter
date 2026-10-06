@@ -1,48 +1,37 @@
-# شمارشگر صنعتی (SmartCounter) 🏭
+# شمارشگر هوشمند (Smart Counter) 📱
 
-اپلیکیشن اندروید **شمارش دقیق محصولات روی خط انتقال** (conveyor belt).
-برای افراد بدون سواد فنی: دوربین را رو به خط بگیرید، خط قرمز را با انگشت
-جابه‌جا کنید، شمارش دقیق را ببینید.
+اپلیکیشن اندروید **شمارش خودکار اشیا با دقت بالا** — برای افراد بدون سواد فنی.
+فقط دوربین را رو به اجسام بگیرید؛ خط قرمز را با انگشت جابه‌جا کنید و شمارش را ببینید.
+
+بر پایه پروژه اینستاگرام @pythongorjizadeh (شمارش قرقره با YOLO + ByteTrack) — بهبودیافته و تبدیل‌شده به اپ موبایل.
 
 ## ویژگی‌ها
-- 🎯 YOLOv8 ONNX + IOU Tracker: هر محصول دقیقاً یک‌بار
-- ↑↓ شمارش دوطرفه (ورودی/خروجی)
-- ✋ خط شمارش لمسی (drag)
-- 💾 SQLite گزارش + 📤 خروجی CSV
-- 📷 دوربین زنده + 🎬 ویدیو از گالری
-- 🧪 تست خودکار: unit + e2e
+- ▶ شمارش زنده از دوربین یا ویدیو
+- ✋ جابه‌جایی خط شمارش با لمس
+- ↺ صفر کردن / 💾 ذخیره گزارش / 📤 خروجی CSV
+- 🧠 YOLO + ByteTrack: شمارش دقیق بدون تکرار (هر شیء فقط یک‌بار)
 
-## معماری
-```
-engine/
-  detector.py   — YOLOv8 ONNX (OpenCV DNN, بدون PyTorch)
-  tracker.py    — IOU tracker (جایگزین ByteTrack)
-  counter.py    — شمارش عبور خط (side-change, ضد دوبارشماری)
-  pipeline.py   — اتصال detector→tracker→counter→draw
-reports/store.py — SQLite + CSV
-ui/screen.py    — Kivy UI فارسی
-main.py         — نقطه ورود
-```
-
-## اجرا (دسکتاپ)
-```bash
-pip install kivy opencv-python numpy
-python3 test/test_counter.py   # unit
-python3 test/test_full.py      # e2e (نیاز به assets/yolov8n.onnx)
-python3 main.py
-```
-
-## مدل
-`assets/yolov8n.onnx` (COCO 80-class).
-برای شمارش اختصاصی (قرقره، بسته، ...) فاین‌تیون کنید:
-```bash
-yolo train model=yolov8n.pt data=dataset.yaml epochs=50 imgsz=640
-yolo export model=runs/.../best.pt format=onnx
-# → assets/model.onnx
-```
-
-## بیلد APK
+## اجرا روی اندروید
 ```bash
 pip install buildozer
-buildozer android debug
+buildozer android debug        # خروجی: bin/*.apk
+```
+
+## اجرا روی دسکتاپ (تست)
+```bash
+pip install kivy opencv-python ultralytics
+python test_engine.py          # تست منطق شمارش
+python main.py                 # اجرای اپ
+```
+
+## ساختار
+- `main.py` — UI فارسی + موتور شمارش
+- `test_engine.py` — تست خودکار منطق
+- `buildozer.spec` — تنظیمات بیلد APK
+- `assets/` — مدل (`model.pt` یا `model.tflite`)
+
+## مدل
+پیش‌فرض: `yolov8n.pt` عمومی. برای شمارش اختصاصی (قرقره، پیچ، بسته و...) با چند ده عکس خود اجسام فاین‌تیون کنید:
+```bash
+yolo train model=yolov8n.pt data=dataset.yaml epochs=50 imgsz=640
 ```
