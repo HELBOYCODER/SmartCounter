@@ -13,9 +13,9 @@ android.api = 34
 android.minapi = 26
 android.archs = arm64-v8a
 android.allow_backup = True
-
-# assets (model) must NOT be compressed in APK
 android.add_assets = assets/
+# keep ONNX uncompressed so OpenCV DNN can mmap it
+android.no-compile-pyo = True
 
 [buildozer]
 log_level = 2

@@ -128,7 +128,7 @@ class CounterScreen(FloatLayout):
             # register result receiver
             activity.registerForActivityResult(
                 autoclass("androidx.activity.result.contract"
-                          ".ActivityResultContracts\$OpenDocument"),
+                          ".ActivityResultContracts$OpenDocument"),
                 self._on_video_result,
             ).launch(intent)
         except Exception as e:
