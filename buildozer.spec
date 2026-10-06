@@ -1,10 +1,10 @@
 [app]
-title = شمارشگر هوشمند
+title = SmartCounter
 package.name = smartcounter
 package.domain = ir.ersaz
 source.dir = .
-source.include_exts = py,png,jpg,kv,onnx,tflite,yaml
-version = 1.0.0
+source.include_exts = py,png,jpg,kv,onnx,tflite
+version = 2.0.0
 requirements = python3,kivy==2.3.1,opencv,numpy,sqlite3
 orientation = portrait
 fullscreen = 0
@@ -14,12 +14,10 @@ android.minapi = 26
 android.archs = arm64-v8a
 android.allow_backup = True
 
-# مدل‌های بزرگ نباید داخل APK فشرده شوند
-android.add_src = assets/
+# assets (model) must NOT be compressed in APK
+android.add_assets = assets/
 
 [buildozer]
 log_level = 2
 warn_on_root = 1
-
-# p4a release tag (avoid p4a master's python 3.14, incompatible with kivy 2.3.0)
 p4a.branch = v2026.05.09
