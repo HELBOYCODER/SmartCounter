@@ -32,19 +32,34 @@ class IouTrackerTest {
         counter.processTracks(tracks)
         assertEquals(0, counter.totalCount)
 
-        // 2. Stable second frame above line
+        // 2. Stable second frame above line (hits = 2)
         tracks = tracker.update(listOf(Pair(boxAbove, 0.9f)))
         counter.processTracks(tracks)
         assertEquals(0, counter.totalCount)
 
-        // 3. Move below line (centroid = 0.7f > 0.5f)
+        // 3. Stable third frame above line (hits = 3)
+        tracks = tracker.update(listOf(Pair(boxAbove, 0.9f)))
+        counter.processTracks(tracks)
+        assertEquals(0, counter.totalCount)
+
+        // 4. Move below line past hysteresis (centroid = 0.7f > 0.5f + 0.055f)
         val boxBelow = RectF(0.2f, 0.6f, 0.4f, 0.8f)
         tracks = tracker.update(listOf(Pair(boxBelow, 0.9f)))
         counter.processTracks(tracks)
         assertEquals(1, counter.totalCount)
         assertEquals(1, counter.countForward)
 
-        // 4. Repeated frames below line: no double count
+        // 5. Repeated frames below line: no double count
+        tracks = tracker.update(listOf(Pair(boxBelow, 0.9f)))
+        counter.processTracks(tracks)
+        assertEquals(1, counter.totalCount)
+
+        // 6. Transient frame drop (camera occlusion / flicker)
+        tracker.update(emptyList())
+        counter.processTracks(emptyList())
+        assertEquals(1, counter.totalCount)
+
+        // 7. Reappearance at same location: spatial and ID deduplication prevents re-counting!
         tracks = tracker.update(listOf(Pair(boxBelow, 0.9f)))
         counter.processTracks(tracks)
         assertEquals(1, counter.totalCount)

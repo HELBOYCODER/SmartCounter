@@ -61,10 +61,10 @@ import com.helboy.smartcounter.ui.theme.TextPrimary
 import com.helboy.smartcounter.ui.theme.TextSecondary
 
 enum class SensitivityLevel(val conf: Float, val cvSens: Float, val label: String) {
-    LOW(0.36f, 0.35f, "کم"),
-    NORMAL(0.30f, 0.45f, "استاندارد"),
-    HIGH(0.26f, 0.55f, "دقیق"),
-    ULTRA(0.20f, 0.65f, "حداکثر")
+    LOW(0.42f, 0.25f, "کم"),
+    NORMAL(0.35f, 0.38f, "استاندارد"),
+    HIGH(0.28f, 0.48f, "دقیق"),
+    ULTRA(0.22f, 0.58f, "حداکثر")
 }
 
 @Composable
@@ -107,7 +107,7 @@ fun SmartCounterScreen() {
 
     // Strict Target Settings: Default is strict Food Container mode with YOLO AI (Zero false positives on walls/doors)
     var activePreset by remember { mutableStateOf(OnnxYoloAnalyzer.DetectionPreset.FOOD_CONTAINER) }
-    var sensitivityLevel by remember { mutableStateOf(SensitivityLevel.HIGH) }
+    var sensitivityLevel by remember { mutableStateOf(SensitivityLevel.NORMAL) }
     var engineMode by remember { mutableStateOf(UnifiedVisionAnalyzer.EngineMode.YOLO_AI) }
 
     // UI state

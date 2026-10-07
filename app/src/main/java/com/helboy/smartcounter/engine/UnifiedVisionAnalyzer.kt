@@ -32,7 +32,6 @@ class UnifiedVisionAnalyzer(
         FAST_CV    // Lightweight geometric CV
     }
 
-    // Default to YOLO_AI: strictly recognizes food containers and ignores walls/doors/sky!
     var engineMode: EngineMode = EngineMode.YOLO_AI
     var isEnabled: Boolean = true
 
@@ -64,6 +63,33 @@ class UnifiedVisionAnalyzer(
                 currentFps = (frameCount * 1000f) / elapsed
                 frameCount = 0
                 lastFpsTimestamp = now
+            }
+
+            // =========================================================================
+            // HARDWARE GUARD: FAST LUMINANCE CHECK (Black screen & covered lens guard)
+            // =========================================================================
+            val planes = image.planes
+            if (planes.isNotEmpty()) {
+                val buf = planes[0].buffer
+                buf.rewind()
+                val limit = buf.limit()
+                if (limit > 100) {
+                    var sampleSum = 0
+                    val step = limit / 64
+                    for (i in 0 until 64) {
+                        sampleSum += (buf.get(i * step).toInt() and 0xFF)
+                    }
+                    val avgLum = sampleSum / 64
+
+                    if (avgLum < 16) {
+                        // Pitch black / lens covered / zero light:
+                        // Clear cached detections, purge tracking, and return ZERO count!
+                        cachedYoloBoxes = emptyList()
+                        updateTrackingAndCounter(emptyList(), "صفحه تاریک (شمارش قفل)")
+                        image.close()
+                        return
+                    }
+                }
             }
 
             var detectedBoxes: List<Pair<RectF, Float>> = emptyList()
@@ -133,13 +159,16 @@ class UnifiedVisionAnalyzer(
 
     private fun updateTrackingAndCounter(boxes: List<Pair<RectF, Float>>, engineName: String) {
         val allTracks = tracker.update(boxes)
-        lineCounter.processTracks(allTracks)
 
-        // Only verified tracks (hits >= 2) or active detections are reported
-        val verifiedTracks = tracker.getVerifiedTracks(minHits = 2)
-        val activeTracksToReport = if (verifiedTracks.isNotEmpty()) verifiedTracks else allTracks
+        // STRICT PERSISTENCE GUARD:
+        // Only objects verified in at least 3 consecutive frames are reported.
+        // Single-frame flickers or noise NEVER create counts or UI boxes!
+        val verifiedTracks = tracker.getVerifiedTracks(minHits = 3)
 
-        onAnalysisResult(activeTracksToReport, currentFps, boxes.size, engineName)
+        // Feed ONLY verified stable tracks to the line counter
+        lineCounter.processTracks(verifiedTracks)
+
+        onAnalysisResult(verifiedTracks, currentFps, verifiedTracks.size, engineName)
     }
 
     fun release() {
