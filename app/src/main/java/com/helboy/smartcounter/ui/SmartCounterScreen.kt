@@ -31,15 +31,23 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.helboy.smartcounter.core.CameraManager
 import com.helboy.smartcounter.core.HapticManager
 import com.helboy.smartcounter.data.SessionRepository
-import com.helboy.smartcounter.engine.IndustrialVisionAnalyzer
 import com.helboy.smartcounter.engine.IouTracker
 import com.helboy.smartcounter.engine.LineCounter
+import com.helboy.smartcounter.engine.OnnxYoloAnalyzer
 import com.helboy.smartcounter.engine.TrackedObject
+import com.helboy.smartcounter.engine.UnifiedVisionAnalyzer
 import com.helboy.smartcounter.ui.components.CounterHudBottom
 import com.helboy.smartcounter.ui.components.CounterHudTop
 import com.helboy.smartcounter.ui.components.CountingOverlay
 import com.helboy.smartcounter.ui.components.PermissionCard
 import com.helboy.smartcounter.ui.theme.BlackObsidian
+
+enum class SensitivityLevel(val conf: Float, val cvSens: Float, val label: String) {
+    LOW(0.24f, 0.50f, "کم"),
+    NORMAL(0.16f, 0.65f, "نرمال"),
+    HIGH(0.12f, 0.80f, "زیاد"),
+    ULTRA(0.08f, 0.90f, "حداکثر")
+}
 
 @Composable
 fun SmartCounterScreen() {
@@ -79,46 +87,68 @@ fun SmartCounterScreen() {
         )
     }
 
+    // Detection settings
+    var activePreset by remember { mutableStateOf(OnnxYoloAnalyzer.DetectionPreset.FOOD_CONTAINER) }
+    var sensitivityLevel by remember { mutableStateOf(SensitivityLevel.HIGH) }
+    var engineMode by remember { mutableStateOf(UnifiedVisionAnalyzer.EngineMode.HYBRID) }
+
     // UI state
     var totalCount by remember { mutableIntStateOf(0) }
     var inFrameCount by remember { mutableIntStateOf(0) }
     var countForward by remember { mutableIntStateOf(0) }
     var countBackward by remember { mutableIntStateOf(0) }
     var fps by remember { mutableFloatStateOf(0f) }
+    var activeEngineName by remember { mutableStateOf("Hybrid AI+CV") }
     var activeTracks by remember { mutableStateOf<List<TrackedObject>>(emptyList()) }
 
     var isPaused by remember { mutableStateOf(false) }
     var isTorchOn by remember { mutableStateOf(false) }
     var isVertical by remember { mutableStateOf(false) }
-    var isBatchMode by remember { mutableStateOf(false) }
+    var isBatchMode by remember { mutableStateOf(true) } // Default to Batch Mode for food containers / trays
     var linePositionRatio by remember { mutableFloatStateOf(0.55f) }
 
-    // Vision analyzer
+    // Unified AI & CV Vision Analyzer
     val analyzer = remember {
-        IndustrialVisionAnalyzer(
+        UnifiedVisionAnalyzer(
+            context = context,
             tracker = tracker,
             lineCounter = lineCounter,
-            onAnalysisResult = { tracks, currentFps, inFrame ->
+            onAnalysisResult = { tracks, currentFps, inFrame, engineName ->
                 if (!isPaused) {
                     activeTracks = tracks
                     fps = currentFps
                     inFrameCount = inFrame
+                    activeEngineName = engineName
 
                     if (isBatchMode) {
-                        // In batch mode, total count is the number of distinct detected items in frame
-                        totalCount = inFrame
+                        // In batch/tray mode: count is the total number of distinct active tracks in frame
+                        totalCount = tracks.size
                     } else {
-                        // In flow mode, total count is the line crossing count
+                        // In conveyor flow mode: count is line crossing
                         totalCount = lineCounter.totalCount
                         countForward = lineCounter.countForward
                         countBackward = lineCounter.countBackward
                     }
                 }
             }
-        )
+        ).apply {
+            initialize()
+            yoloAnalyzer.confThreshold = sensitivityLevel.conf
+            yoloAnalyzer.targetMode = activePreset
+            cvAnalyzer.sensitivity = sensitivityLevel.cvSens
+            this.engineMode = engineMode
+        }
     }
 
-    // Wire haptic feedback to line crossing
+    // Apply sensitivity changes dynamically
+    LaunchedEffect(sensitivityLevel, activePreset, engineMode) {
+        analyzer.yoloAnalyzer.confThreshold = sensitivityLevel.conf
+        analyzer.yoloAnalyzer.targetMode = activePreset
+        analyzer.cvAnalyzer.sensitivity = sensitivityLevel.cvSens
+        analyzer.engineMode = engineMode
+    }
+
+    // Wire haptic feedback to line crossing in flow mode
     LaunchedEffect(Unit) {
         lineCounter.onCountIncrement = { _, _ ->
             hapticManager.vibrateCount()
@@ -127,6 +157,7 @@ fun SmartCounterScreen() {
 
     DisposableEffect(Unit) {
         onDispose {
+            analyzer.release()
             cameraManager.release()
             repository.close()
         }
@@ -163,7 +194,7 @@ fun SmartCounterScreen() {
             modifier = Modifier.fillMaxSize()
         )
 
-        // 2. Optical Overlay Layer (boxes + laser line)
+        // 2. Optical Overlay Layer (Bounding Boxes + Laser Line)
         if (!isPaused) {
             CountingOverlay(
                 tracks = activeTracks,
@@ -177,7 +208,7 @@ fun SmartCounterScreen() {
             )
         }
 
-        // 3. Top HUD (Digital Display & Stats)
+        // 3. Top HUD (Big Display, Mode, Sensitivity, Badges)
         CounterHudTop(
             totalCount = totalCount,
             inFrameCount = inFrameCount,
@@ -186,17 +217,28 @@ fun SmartCounterScreen() {
             fps = fps,
             isBatchMode = isBatchMode,
             isPaused = isPaused,
+            activeEngine = activeEngineName,
+            preset = activePreset,
+            sensitivityLabel = sensitivityLevel.label,
+            onCycleSensitivity = {
+                val levels = SensitivityLevel.values()
+                val nextIdx = (sensitivityLevel.ordinal + 1) % levels.size
+                sensitivityLevel = levels[nextIdx]
+                Toast.makeText(context, "حساسیت: ${sensitivityLevel.label}", Toast.LENGTH_SHORT).show()
+            },
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .statusBarsPadding()
         )
 
-        // 4. Bottom Control Dock
+        // 4. Bottom Control Dock (Presets, Mode, Action Buttons)
         CounterHudBottom(
             isPaused = isPaused,
             isTorchOn = isTorchOn,
             isVertical = isVertical,
             isBatchMode = isBatchMode,
+            preset = activePreset,
+            engineMode = engineMode,
             onTogglePause = {
                 isPaused = !isPaused
                 analyzer.isEnabled = !isPaused
@@ -215,8 +257,12 @@ fun SmartCounterScreen() {
                 isTorchOn = cameraManager.toggleTorch()
             },
             onFlipCamera = {
-                // Re-bind to front/back lens
-                Toast.makeText(context, "در حال تغییر دوربین...", Toast.LENGTH_SHORT).show()
+                cameraManager.flipCamera(
+                    lifecycleOwner = lifecycleOwner,
+                    previewView = PreviewView(context),
+                    analyzer = analyzer
+                )
+                Toast.makeText(context, "تغییر دوربین", Toast.LENGTH_SHORT).show()
             },
             onToggleOrientation = {
                 isVertical = !isVertical
@@ -229,9 +275,32 @@ fun SmartCounterScreen() {
                 totalCount = 0
                 Toast.makeText(
                     context,
-                    if (isBatchMode) "حالت شمارش سینی فعال شد" else "حالت نوار نقاله فعال شد",
+                    if (isBatchMode) "حالت سینی (شمارش کل کادر)" else "حالت نوار نقاله (خط عبور)",
                     Toast.LENGTH_SHORT
                 ).show()
+            },
+            onSelectPreset = { newPreset ->
+                activePreset = newPreset
+                tracker.reset()
+                lineCounter.reset()
+                totalCount = 0
+                val name = when (newPreset) {
+                    OnnxYoloAnalyzer.DetectionPreset.FOOD_CONTAINER -> "حالت اختصاصی ظروف غذا"
+                    OnnxYoloAnalyzer.DetectionPreset.SPOOL_CIRCULAR -> "حالت قرقره و اجسام مدور"
+                    OnnxYoloAnalyzer.DetectionPreset.ALL_OBJECTS -> "حالت کالاهای عمومی"
+                }
+                Toast.makeText(context, name, Toast.LENGTH_SHORT).show()
+            },
+            onCycleEngineMode = {
+                val modes = UnifiedVisionAnalyzer.EngineMode.values()
+                val nextIdx = (engineMode.ordinal + 1) % modes.size
+                engineMode = modes[nextIdx]
+                val modeDesc = when (engineMode) {
+                    UnifiedVisionAnalyzer.EngineMode.YOLO_AI -> "موتور هوش مصنوعی YOLOv8 (دقت بالا)"
+                    UnifiedVisionAnalyzer.EngineMode.FAST_CV -> "موتور پردازش تصویر ۶۰ فریم (سریع)"
+                    UnifiedVisionAnalyzer.EngineMode.HYBRID -> "موتور هیبرید هوشمند (ترکیبی)"
+                }
+                Toast.makeText(context, modeDesc, Toast.LENGTH_SHORT).show()
             },
             onExportCsv = {
                 val modeStr = if (isBatchMode) "Batch/Tray" else "Conveyor/Flow"
@@ -252,7 +321,6 @@ fun SmartCounterScreen() {
                         }
                         context.startActivity(Intent.createChooser(intent, "ارسال گزارش CSV"))
                     } catch (_: Exception) {
-                        // Fallback if sharing direct uri fails
                     }
                 } else {
                     Toast.makeText(context, "خطا در صدور فایل CSV", Toast.LENGTH_SHORT).show()

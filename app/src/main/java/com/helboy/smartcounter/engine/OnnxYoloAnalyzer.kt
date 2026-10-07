@@ -2,7 +2,9 @@ package com.helboy.smartcounter.engine
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Matrix
 import android.graphics.RectF
+import androidx.camera.core.ImageProxy
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
@@ -10,18 +12,32 @@ import java.io.File
 import java.io.FileOutputStream
 import java.nio.FloatBuffer
 import java.util.Collections
-import kotlin.math.max
-import kotlin.math.min
+import java.util.concurrent.atomic.AtomicBoolean
 
 class OnnxYoloAnalyzer(private val context: Context) {
 
     private var ortEnv: OrtEnvironment? = null
     private var ortSession: OrtSession? = null
     private var isInitialized = false
+    private val isBusy = AtomicBoolean(false)
+
+    var confThreshold: Float = 0.15f // Default tuned for food containers
+    var iouThreshold: Float = 0.40f
+    var targetMode: DetectionPreset = DetectionPreset.FOOD_CONTAINER
 
     private val inputSize = 640
-    private val confThreshold = 0.35f
-    private val iouThreshold = 0.45f
+
+    enum class DetectionPreset {
+        FOOD_CONTAINER, // Prioritizes bowls (45), cups (41), trays, and food boxes
+        SPOOL_CIRCULAR, // Prioritizes circular & spool objects
+        ALL_OBJECTS     // Class-agnostic objectness
+    }
+
+    // High-priority COCO class IDs for food containers
+    // 45 = bowl (food tray / container / bowl)
+    // 41 = cup, 39 = bottle, 48 = sandwich, 51 = carrot, 53 = pizza, 55 = cake
+    // 69 = oven, 73 = book (flat rectangular pack)
+    private val foodContainerClasses = setOf(45, 41, 39, 44, 48, 51, 53, 55, 69, 73)
 
     fun initialize(modelAssetName: String = "yolov8n.onnx"): Boolean {
         return try {
@@ -50,6 +66,39 @@ class OnnxYoloAnalyzer(private val context: Context) {
             }
         }
         return file
+    }
+
+    fun isReady(): Boolean = isInitialized && ortSession != null
+
+    /**
+     * Process ImageProxy from CameraX asynchronously without blocking UI.
+     */
+    fun detectFromImageProxy(imageProxy: ImageProxy): List<Pair<RectF, Float>>? {
+        if (!isReady()) return null
+        if (!isBusy.compareAndSet(false, true)) {
+            // Drop frame if analyzer is busy with previous inference
+            return null
+        }
+
+        return try {
+            // CameraX provides toBitmap() in camera-core 1.3+
+            val bitmap = imageProxy.toBitmap()
+            val rotationDegrees = imageProxy.imageInfo.rotationDegrees
+
+            val orientedBitmap = if (rotationDegrees != 0) {
+                val matrix = Matrix().apply { postRotate(rotationDegrees.toFloat()) }
+                Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+            } else {
+                bitmap
+            }
+
+            detect(orientedBitmap)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        } finally {
+            isBusy.set(false)
+        }
     }
 
     fun detect(bitmap: Bitmap): List<Pair<RectF, Float>> {
@@ -94,15 +143,48 @@ class OnnxYoloAnalyzer(private val context: Context) {
             val rawBoxes = mutableListOf<RawBox>()
 
             for (anchorIdx in 0 until numAnchors) {
-                var maxClassScore = 0.0f
-                for (c in 0 until numClasses) {
-                    val score = tensor84x8400[4 + c][anchorIdx]
-                    if (score > maxClassScore) {
-                        maxClassScore = score
+                var bestScore = 0.0f
+                var bestClass = -1
+
+                when (targetMode) {
+                    DetectionPreset.FOOD_CONTAINER -> {
+                        // In Food Container mode, prioritize class 45 (bowl/tray) & food pack classes
+                        for (c in 0 until numClasses) {
+                            val score = tensor84x8400[4 + c][anchorIdx]
+                            val boostedScore = if (c in foodContainerClasses) {
+                                // Boost food-related classes for meal trays and containers
+                                score * (if (c == 45) 1.25f else 1.10f)
+                            } else {
+                                score * 0.85f
+                            }
+                            if (boostedScore > bestScore) {
+                                bestScore = boostedScore
+                                bestClass = c
+                            }
+                        }
+                    }
+                    DetectionPreset.SPOOL_CIRCULAR -> {
+                        for (c in 0 until numClasses) {
+                            val score = tensor84x8400[4 + c][anchorIdx]
+                            if (score > bestScore) {
+                                bestScore = score
+                                bestClass = c
+                            }
+                        }
+                    }
+                    DetectionPreset.ALL_OBJECTS -> {
+                        // Class-agnostic objectness
+                        for (c in 0 until numClasses) {
+                            val score = tensor84x8400[4 + c][anchorIdx]
+                            if (score > bestScore) {
+                                bestScore = score
+                                bestClass = c
+                            }
+                        }
                     }
                 }
 
-                if (maxClassScore >= confThreshold) {
+                if (bestScore >= confThreshold) {
                     val cx = tensor84x8400[0][anchorIdx]
                     val cy = tensor84x8400[1][anchorIdx]
                     val w = tensor84x8400[2][anchorIdx]
@@ -119,7 +201,7 @@ class OnnxYoloAnalyzer(private val context: Context) {
                         right.coerceIn(0f, 1f),
                         bottom.coerceIn(0f, 1f)
                     )
-                    rawBoxes.add(RawBox(rect, maxClassScore))
+                    rawBoxes.add(RawBox(rect, bestScore, bestClass))
                 }
             }
 
@@ -133,7 +215,7 @@ class OnnxYoloAnalyzer(private val context: Context) {
         }
     }
 
-    private data class RawBox(val rect: RectF, val score: Float)
+    private data class RawBox(val rect: RectF, val score: Float, val classId: Int)
 
     private fun applyNms(boxes: List<RawBox>): List<Pair<RectF, Float>> {
         val sorted = boxes.sortedByDescending { it.score }
