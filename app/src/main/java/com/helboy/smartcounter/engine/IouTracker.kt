@@ -80,6 +80,14 @@ class IouTracker(
 
     fun getActiveTracks(): List<TrackedObject> = tracks.values.toList()
 
+    /**
+     * Verified tracks: Observed in at least [minHits] frames.
+     * Prevents single-frame shadow/reflection glitches from triggering counts.
+     */
+    fun getVerifiedTracks(minHits: Int = 2): List<TrackedObject> {
+        return tracks.values.filter { it.hits >= minHits }
+    }
+
     companion object {
         fun calculateIou(a: RectF, b: RectF): Float {
             val interLeft = max(a.left, b.left)

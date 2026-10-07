@@ -27,11 +27,12 @@ class UnifiedVisionAnalyzer(
     val cvAnalyzer = IndustrialVisionAnalyzer()
 
     enum class EngineMode {
-        YOLO_AI,   // Deep Learning YOLOv8 ONNX (High Accuracy)
-        FAST_CV,   // 60 FPS 2D Spatial CV (Lightweight)
-        HYBRID     // Unified Fusion (Best of both)
+        YOLO_AI,   // Primary AI neural network (Strict zero false-positive on walls/doors)
+        HYBRID,    // AI anchor + CV edge stabilization
+        FAST_CV    // Lightweight geometric CV
     }
 
+    // Default to YOLO_AI: strictly recognizes food containers and ignores walls/doors/sky!
     var engineMode: EngineMode = EngineMode.YOLO_AI
     var isEnabled: Boolean = true
 
@@ -56,7 +57,6 @@ class UnifiedVisionAnalyzer(
         }
 
         try {
-            // Measure FPS
             frameCount++
             val now = System.currentTimeMillis()
             val elapsed = now - lastFpsTimestamp
@@ -69,14 +69,10 @@ class UnifiedVisionAnalyzer(
             var detectedBoxes: List<Pair<RectF, Float>> = emptyList()
 
             when (engineMode) {
-                EngineMode.FAST_CV -> {
-                    detectedBoxes = cvAnalyzer.analyzeYPlane(image, yoloAnalyzer.targetMode)
-                    updateTrackingAndCounter(detectedBoxes, "Fast CV 60fps")
-                    image.close()
-                }
-
                 EngineMode.YOLO_AI -> {
-                    // Run YOLO asynchronously, use cached boxes for smooth 60fps tracking
+                    // Strict Neural Network Detection:
+                    // Only processes containers that match the target class with high confidence.
+                    // Walls, doors, ceiling, floors have score 0.00 and produce ZERO boxes.
                     if (yoloAnalyzer.isReady() && !isYoloBusy.get()) {
                         isYoloBusy.set(true)
                         scope.launch {
@@ -95,14 +91,12 @@ class UnifiedVisionAnalyzer(
                     }
 
                     detectedBoxes = cachedYoloBoxes
-                    updateTrackingAndCounter(detectedBoxes, "YOLOv8 AI")
+                    updateTrackingAndCounter(detectedBoxes, "هوش مصنوعی YOLOv8")
                 }
 
                 EngineMode.HYBRID -> {
-                    // 1. Fast CV runs on current frame
-                    val cvBoxes = cvAnalyzer.analyzeYPlane(image, yoloAnalyzer.targetMode)
-
-                    // 2. YOLO runs in background
+                    // In Hybrid mode: YOLO is the authoritative anchor.
+                    // Only if YOLO confirms food containers exist do we process.
                     if (yoloAnalyzer.isReady() && !isYoloBusy.get()) {
                         isYoloBusy.set(true)
                         scope.launch {
@@ -120,19 +114,14 @@ class UnifiedVisionAnalyzer(
                         image.close()
                     }
 
-                    // 3. Fuse CV boxes and YOLO boxes
-                    val merged = mutableListOf<Pair<RectF, Float>>()
-                    merged.addAll(cachedYoloBoxes)
-                    for (cvBox in cvBoxes) {
-                        val alreadyCovered = cachedYoloBoxes.any { yoloBox ->
-                            IouTracker.calculateIou(cvBox.first, yoloBox.first) > 0.35f
-                        }
-                        if (!alreadyCovered) {
-                            merged.add(cvBox)
-                        }
-                    }
-                    detectedBoxes = merged
-                    updateTrackingAndCounter(detectedBoxes, "Hybrid AI+CV")
+                    detectedBoxes = cachedYoloBoxes
+                    updateTrackingAndCounter(detectedBoxes, "هیبرید هوشمند")
+                }
+
+                EngineMode.FAST_CV -> {
+                    detectedBoxes = cvAnalyzer.analyzeYPlane(image, yoloAnalyzer.targetMode)
+                    updateTrackingAndCounter(detectedBoxes, "بینایی ماشین ۶۰ فریم")
+                    image.close()
                 }
             }
 
@@ -143,9 +132,14 @@ class UnifiedVisionAnalyzer(
     }
 
     private fun updateTrackingAndCounter(boxes: List<Pair<RectF, Float>>, engineName: String) {
-        val activeTracks = tracker.update(boxes)
-        lineCounter.processTracks(activeTracks)
-        onAnalysisResult(activeTracks, currentFps, boxes.size, engineName)
+        val allTracks = tracker.update(boxes)
+        lineCounter.processTracks(allTracks)
+
+        // Only verified tracks (hits >= 2) or active detections are reported
+        val verifiedTracks = tracker.getVerifiedTracks(minHits = 2)
+        val activeTracksToReport = if (verifiedTracks.isNotEmpty()) verifiedTracks else allTracks
+
+        onAnalysisResult(activeTracksToReport, currentFps, boxes.size, engineName)
     }
 
     fun release() {

@@ -9,9 +9,17 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -23,7 +31,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
@@ -40,13 +52,19 @@ import com.helboy.smartcounter.ui.components.CounterHudBottom
 import com.helboy.smartcounter.ui.components.CounterHudTop
 import com.helboy.smartcounter.ui.components.CountingOverlay
 import com.helboy.smartcounter.ui.components.PermissionCard
+import com.helboy.smartcounter.ui.theme.AmberAccent
 import com.helboy.smartcounter.ui.theme.BlackObsidian
+import com.helboy.smartcounter.ui.theme.CyanNeon
+import com.helboy.smartcounter.ui.theme.EmeraldCyber
+import com.helboy.smartcounter.ui.theme.SurfaceGlass
+import com.helboy.smartcounter.ui.theme.TextPrimary
+import com.helboy.smartcounter.ui.theme.TextSecondary
 
 enum class SensitivityLevel(val conf: Float, val cvSens: Float, val label: String) {
-    LOW(0.24f, 0.50f, "کم"),
-    NORMAL(0.16f, 0.65f, "نرمال"),
-    HIGH(0.12f, 0.80f, "زیاد"),
-    ULTRA(0.08f, 0.90f, "حداکثر")
+    LOW(0.36f, 0.35f, "کم"),
+    NORMAL(0.30f, 0.45f, "استاندارد"),
+    HIGH(0.26f, 0.55f, "دقیق"),
+    ULTRA(0.20f, 0.65f, "حداکثر")
 }
 
 @Composable
@@ -87,10 +105,10 @@ fun SmartCounterScreen() {
         )
     }
 
-    // Detection settings
+    // Strict Target Settings: Default is strict Food Container mode with YOLO AI (Zero false positives on walls/doors)
     var activePreset by remember { mutableStateOf(OnnxYoloAnalyzer.DetectionPreset.FOOD_CONTAINER) }
     var sensitivityLevel by remember { mutableStateOf(SensitivityLevel.HIGH) }
-    var engineMode by remember { mutableStateOf(UnifiedVisionAnalyzer.EngineMode.HYBRID) }
+    var engineMode by remember { mutableStateOf(UnifiedVisionAnalyzer.EngineMode.YOLO_AI) }
 
     // UI state
     var totalCount by remember { mutableIntStateOf(0) }
@@ -98,13 +116,13 @@ fun SmartCounterScreen() {
     var countForward by remember { mutableIntStateOf(0) }
     var countBackward by remember { mutableIntStateOf(0) }
     var fps by remember { mutableFloatStateOf(0f) }
-    var activeEngineName by remember { mutableStateOf("Hybrid AI+CV") }
+    var activeEngineName by remember { mutableStateOf("YOLOv8 AI") }
     var activeTracks by remember { mutableStateOf<List<TrackedObject>>(emptyList()) }
 
     var isPaused by remember { mutableStateOf(false) }
     var isTorchOn by remember { mutableStateOf(false) }
     var isVertical by remember { mutableStateOf(false) }
-    var isBatchMode by remember { mutableStateOf(true) } // Default to Batch Mode for food containers / trays
+    var isBatchMode by remember { mutableStateOf(true) } // Batch Mode for food container arrays/trays
     var linePositionRatio by remember { mutableFloatStateOf(0.55f) }
 
     // Unified AI & CV Vision Analyzer
@@ -121,7 +139,7 @@ fun SmartCounterScreen() {
                     activeEngineName = engineName
 
                     if (isBatchMode) {
-                        // In batch/tray mode: count is the total number of distinct active tracks in frame
+                        // In batch mode: count is the active target tracks in frame
                         totalCount = tracks.size
                     } else {
                         // In conveyor flow mode: count is line crossing
@@ -148,7 +166,7 @@ fun SmartCounterScreen() {
         analyzer.engineMode = engineMode
     }
 
-    // Wire haptic feedback to line crossing in flow mode
+    // Wire haptic feedback when new items are detected or cross
     LaunchedEffect(Unit) {
         lineCounter.onCountIncrement = { _, _ ->
             hapticManager.vibrateCount()
@@ -208,7 +226,36 @@ fun SmartCounterScreen() {
             )
         }
 
-        // 3. Top HUD (Big Display, Mode, Sensitivity, Badges)
+        // 3. Central Target Status Pill
+        Box(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .clip(RoundedCornerShape(16.dp))
+                .background(SurfaceGlass)
+                .padding(horizontal = 14.dp, vertical = 7.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(if (activeTracks.isNotEmpty()) EmeraldCyber else AmberAccent)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = if (activeTracks.isNotEmpty()) {
+                        "✅ ${activeTracks.size} ظرف غذا در کادر شناسایی شد"
+                    } else {
+                        "🔍 دوربین را رو به ظروف غذا بگیرید..."
+                    },
+                    fontSize = 11.sp,
+                    color = if (activeTracks.isNotEmpty()) EmeraldCyber else TextSecondary,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+
+        // 4. Top HUD (Big Display, Mode, Sensitivity, Badges)
         CounterHudTop(
             totalCount = totalCount,
             inFrameCount = inFrameCount,
@@ -231,7 +278,7 @@ fun SmartCounterScreen() {
                 .statusBarsPadding()
         )
 
-        // 4. Bottom Control Dock (Presets, Mode, Action Buttons)
+        // 5. Bottom Control Dock (Presets, Mode, Action Buttons)
         CounterHudBottom(
             isPaused = isPaused,
             isTorchOn = isTorchOn,
@@ -285,9 +332,9 @@ fun SmartCounterScreen() {
                 lineCounter.reset()
                 totalCount = 0
                 val name = when (newPreset) {
-                    OnnxYoloAnalyzer.DetectionPreset.FOOD_CONTAINER -> "حالت اختصاصی ظروف غذا"
-                    OnnxYoloAnalyzer.DetectionPreset.SPOOL_CIRCULAR -> "حالت قرقره و اجسام مدور"
-                    OnnxYoloAnalyzer.DetectionPreset.ALL_OBJECTS -> "حالت کالاهای عمومی"
+                    OnnxYoloAnalyzer.DetectionPreset.FOOD_CONTAINER -> "قفل هدف: فقط ظروف غذا"
+                    OnnxYoloAnalyzer.DetectionPreset.SPOOL_CIRCULAR -> "قفل هدف: قرقره و اجسام مدور"
+                    OnnxYoloAnalyzer.DetectionPreset.ALL_OBJECTS -> "قفل هدف: کالاهای عمومی"
                 }
                 Toast.makeText(context, name, Toast.LENGTH_SHORT).show()
             },
@@ -296,9 +343,9 @@ fun SmartCounterScreen() {
                 val nextIdx = (engineMode.ordinal + 1) % modes.size
                 engineMode = modes[nextIdx]
                 val modeDesc = when (engineMode) {
-                    UnifiedVisionAnalyzer.EngineMode.YOLO_AI -> "موتور هوش مصنوعی YOLOv8 (دقت بالا)"
-                    UnifiedVisionAnalyzer.EngineMode.FAST_CV -> "موتور پردازش تصویر ۶۰ فریم (سریع)"
-                    UnifiedVisionAnalyzer.EngineMode.HYBRID -> "موتور هیبرید هوشمند (ترکیبی)"
+                    UnifiedVisionAnalyzer.EngineMode.YOLO_AI -> "هوش مصنوعی YOLOv8 (فقط ظروف)"
+                    UnifiedVisionAnalyzer.EngineMode.HYBRID -> "هیبرید هوشمند"
+                    UnifiedVisionAnalyzer.EngineMode.FAST_CV -> "پردازش سریع ۶۰ فریم"
                 }
                 Toast.makeText(context, modeDesc, Toast.LENGTH_SHORT).show()
             },

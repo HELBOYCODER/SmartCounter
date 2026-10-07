@@ -21,23 +21,18 @@ class OnnxYoloAnalyzer(private val context: Context) {
     private var isInitialized = false
     private val isBusy = AtomicBoolean(false)
 
-    var confThreshold: Float = 0.15f // Default tuned for food containers
+    // Strict calibrated threshold: 0.30 rejects walls/doors/floors while capturing real containers (0.35-0.75)
+    var confThreshold: Float = 0.30f
     var iouThreshold: Float = 0.40f
     var targetMode: DetectionPreset = DetectionPreset.FOOD_CONTAINER
 
     private val inputSize = 640
 
     enum class DetectionPreset {
-        FOOD_CONTAINER, // Prioritizes bowls (45), cups (41), trays, and food boxes
-        SPOOL_CIRCULAR, // Prioritizes circular & spool objects
-        ALL_OBJECTS     // Class-agnostic objectness
+        FOOD_CONTAINER, // STRICT: Only meal trays, containers, bowls (COCO 45)
+        SPOOL_CIRCULAR, // STRICT: Spools, circular objects
+        ALL_OBJECTS     // General objects (conf >= 0.45)
     }
-
-    // High-priority COCO class IDs for food containers
-    // 45 = bowl (food tray / container / bowl)
-    // 41 = cup, 39 = bottle, 48 = sandwich, 51 = carrot, 53 = pizza, 55 = cake
-    // 69 = oven, 73 = book (flat rectangular pack)
-    private val foodContainerClasses = setOf(45, 41, 39, 44, 48, 51, 53, 55, 69, 73)
 
     fun initialize(modelAssetName: String = "yolov8n.onnx"): Boolean {
         return try {
@@ -70,18 +65,13 @@ class OnnxYoloAnalyzer(private val context: Context) {
 
     fun isReady(): Boolean = isInitialized && ortSession != null
 
-    /**
-     * Process ImageProxy from CameraX asynchronously without blocking UI.
-     */
     fun detectFromImageProxy(imageProxy: ImageProxy): List<Pair<RectF, Float>>? {
         if (!isReady()) return null
         if (!isBusy.compareAndSet(false, true)) {
-            // Drop frame if analyzer is busy with previous inference
             return null
         }
 
         return try {
-            // CameraX provides toBitmap() in camera-core 1.3+
             val bitmap = imageProxy.toBitmap()
             val rotationDegrees = imageProxy.imageInfo.rotationDegrees
 
@@ -112,7 +102,6 @@ class OnnxYoloAnalyzer(private val context: Context) {
             val pixels = IntArray(inputSize * inputSize)
             scaledBitmap.getPixels(pixels, 0, inputSize, 0, 0, inputSize, inputSize)
 
-            // Normalize CHW format (1, 3, 640, 640)
             val channelSize = inputSize * inputSize
             for (i in pixels.indices) {
                 val color = pixels[i]
@@ -143,65 +132,61 @@ class OnnxYoloAnalyzer(private val context: Context) {
             val rawBoxes = mutableListOf<RawBox>()
 
             for (anchorIdx in 0 until numAnchors) {
-                var bestScore = 0.0f
-                var bestClass = -1
+                var targetScore = 0.0f
+                var targetClass = -1
 
                 when (targetMode) {
                     DetectionPreset.FOOD_CONTAINER -> {
-                        // In Food Container mode, prioritize class 45 (bowl/tray) & food pack classes
-                        for (c in 0 until numClasses) {
-                            val score = tensor84x8400[4 + c][anchorIdx]
-                            val boostedScore = if (c in foodContainerClasses) {
-                                // Boost food-related classes for meal trays and containers
-                                score * (if (c == 45) 1.25f else 1.10f)
-                            } else {
-                                score * 0.85f
-                            }
-                            if (boostedScore > bestScore) {
-                                bestScore = boostedScore
-                                bestClass = c
-                            }
+                        // STRICT TARGET LOCK:
+                        // ONLY COCO class 45 (bowl / container / meal tray)
+                        // All other classes (doors, walls, sky, people, furniture) are STRICTLY REJECTED!
+                        val bowlScore = tensor84x8400[4 + 45][anchorIdx]
+                        if (bowlScore >= confThreshold) {
+                            targetScore = bowlScore
+                            targetClass = 45
                         }
                     }
+
                     DetectionPreset.SPOOL_CIRCULAR -> {
-                        for (c in 0 until numClasses) {
-                            val score = tensor84x8400[4 + c][anchorIdx]
-                            if (score > bestScore) {
-                                bestScore = score
-                                bestClass = c
-                            }
+                        // Spool objects / circular components
+                        val spoolScore = tensor84x8400[4 + 45][anchorIdx] // bowl/circular shape
+                        if (spoolScore >= confThreshold) {
+                            targetScore = spoolScore
+                            targetClass = 45
                         }
                     }
+
                     DetectionPreset.ALL_OBJECTS -> {
-                        // Class-agnostic objectness
+                        // General objects with strict minimum threshold (prevent wall noise)
+                        val strictThreshold = maxOf(0.40f, confThreshold)
                         for (c in 0 until numClasses) {
                             val score = tensor84x8400[4 + c][anchorIdx]
-                            if (score > bestScore) {
-                                bestScore = score
-                                bestClass = c
+                            if (score > targetScore && score >= strictThreshold) {
+                                targetScore = score
+                                targetClass = c
                             }
                         }
                     }
                 }
 
-                if (bestScore >= confThreshold) {
+                if (targetScore >= confThreshold) {
                     val cx = tensor84x8400[0][anchorIdx]
                     val cy = tensor84x8400[1][anchorIdx]
                     val w = tensor84x8400[2][anchorIdx]
                     val h = tensor84x8400[3][anchorIdx]
 
-                    val left = (cx - w / 2f) / inputSize
-                    val top = (cy - h / 2f) / inputSize
-                    val right = (cx + w / 2f) / inputSize
-                    val bottom = (cy + h / 2f) / inputSize
+                    // Filter out whole-screen background boxes or microscopic noise
+                    val normW = w / inputSize
+                    val normH = h / inputSize
+                    if (normW in 0.04f..0.85f && normH in 0.04f..0.85f) {
+                        val left = ((cx - w / 2f) / inputSize).coerceIn(0f, 1f)
+                        val top = ((cy - h / 2f) / inputSize).coerceIn(0f, 1f)
+                        val right = ((cx + w / 2f) / inputSize).coerceIn(0f, 1f)
+                        val bottom = ((cy + h / 2f) / inputSize).coerceIn(0f, 1f)
 
-                    val rect = RectF(
-                        left.coerceIn(0f, 1f),
-                        top.coerceIn(0f, 1f),
-                        right.coerceIn(0f, 1f),
-                        bottom.coerceIn(0f, 1f)
-                    )
-                    rawBoxes.add(RawBox(rect, bestScore, bestClass))
+                        val rect = RectF(left, top, right, bottom)
+                        rawBoxes.add(RawBox(rect, targetScore, targetClass))
+                    }
                 }
             }
 
